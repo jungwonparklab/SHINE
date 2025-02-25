@@ -10,6 +10,8 @@ Joodeok Kim (juori22@snu.ac.kr)¹<sup>†</sup>, Jinho Rhee (jhrhee01@snu.ac.kr)
 
 This is the code for our paper, "Self-supervised machine-learning framework for high-throughput electron microscopy". Our method includes denoising of liquid cell TEM, in-situ (S)TEM, and cryo-ET micrographs.
 
+Datasets for our paper are available on Zenodo at https://zenodo.org/records/14922032.
+
 ## Installation
 We recommend using a virtual environment for both training and inference.
 
