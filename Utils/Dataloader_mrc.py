@@ -7,6 +7,7 @@ import cv2 as cv
 import numba
 import bisect
 import mrcfile
+import ncempy.io.dm as dm
 from torch.utils import data
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.dataset import Subset
@@ -248,7 +249,6 @@ class TestLoader_mrc(Dataset):
 
         return data, idx, img_name, gain_value
 
-import ncempy.io.dm as dm
 
 class TestLoader_dm4(Dataset):
     def __init__(self, image_dir, subset=None, gain_dir=None, frames = 5):
@@ -305,6 +305,73 @@ class TestLoader_dm4(Dataset):
         img_name = os.path.basename(self.image_list[file_num])
 
         return batch_image, file_indexes[self.frame_num//2], img_name, gain_value
+
+# ------------
+# SK added
+# ------------
+class TestLoader_large_dm4(Dataset):
+    def __init__(self, image_dir, subset=None, gain_dir=None, frame_num=5):
+        self.image_dir = image_dir
+        self.frame_num = frame_num
+        
+        self.image_list = sorted([f for f in os.listdir(image_dir) if f.endswith('.dm4')])
+        self.total_length = len(self.image_list)
+
+        if subset is not None:
+            self.subset = subset
+        else:
+            self.subset = self.total_length
+
+        self.gain_value = None
+        if gain_dir is not None and gain_dir != 'None':
+            if gain_dir.endswith('.dm4'):
+                g_obj = dm.fileDM(gain_dir)
+                g_data = g_obj.getDataset(0)['data']
+            else:
+                with mrcfile.open(gain_dir, permissive=True) as mrc:
+                    g_data = mrc.data
+            
+            g_data = np.flipud(g_data).astype(np.float32)
+            self.gain_value = g_data
+
+    def __len__(self):
+        return int(self.subset)
+
+    def __getitem__(self, idx):
+        idx_list = idxreturn(idx, self.subset, frame_num=self.frame_num)
+        
+        first = True
+        img_series = None
+        img_name = ""
+
+        for neighbor_idx in idx_list:
+            fname = self.image_list[neighbor_idx]
+            fpath = os.path.join(self.image_dir, fname)
+            
+            try:
+                dm_obj = dm.fileDM(fpath)
+                img = dm_obj.getDataset(0)['data'].astype(np.float32)
+            except Exception as e:
+                print(f"Error reading {fname}: {e}")
+                img = np.zeros_like(self.gain_value if self.gain_value is not None else (1024,1024))
+
+            if self.gain_value is not None:
+                img = img * self.gain_value
+
+            # Shape (H, W) to (1, H, W)
+            img = np.expand_dims(img, axis=0)
+
+            if first:
+                first = False
+                img_series = img
+            else:
+                img_series = np.concatenate((img_series, img), axis=0)
+
+            if neighbor_idx == idx_list[self.frame_num // 2]:
+                img_name = fname
+
+        batch_image = torch.from_numpy(img_series)
+        return batch_image, idx, img_name
 
 def Sequentialloader_single(image_dir, image_size,gt_path=None,validation_length=1,recursive_factor=10):
     total_length = len(os.listdir(image_dir))
@@ -410,3 +477,49 @@ class TestLoader_single(Dataset):
         #batch_processed = self.transforms(batch_image)
         previous_out = batch_processed[0, :, :]
         return previous_out, idx, img_name
+    
+class TestLoader_single_dm4(Dataset):
+    def __init__(self, image_dir, subset=None, gain_dir=None):
+        self.image_dir = image_dir
+        
+        self.image_list = sorted([f for f in os.listdir(image_dir) if f.endswith('.dm4')])
+        self.total_length = len(self.image_list)
+
+        if subset is not None:
+            self.subset = subset
+        else:
+            self.subset = self.total_length
+
+        self.gain_value = None
+        if gain_dir is not None and gain_dir != 'None':
+            if gain_dir.endswith('.dm4'):
+                g_obj = dm.fileDM(gain_dir)
+                g_data = g_obj.getDataset(0)
+                g_data = g_data['data'] if isinstance(g_data, dict) else g_data
+            else:
+                with mrcfile.open(gain_dir, permissive=True) as mrc:
+                    g_data = mrc.data
+            
+            self.gain_value = np.flipud(g_data).astype(np.float32)
+
+    def __len__(self):
+        return int(self.subset)        
+
+    def __getitem__(self, idx): 
+        img_name = self.image_list[idx]
+        file_path = os.path.join(self.image_dir, img_name)
+        
+        try:
+            dm_obj = dm.fileDM(file_path)
+            img_data = dm_obj.getDataset(0)
+            img = img_data['data'] if isinstance(img_data, dict) else img_data
+            img = img.astype(np.float32)
+        except Exception as e:
+            print(f"Error reading {img_name}: {e}")
+            img = np.zeros((1024, 1024), dtype=np.float32) # Assume standard size or handle dynamic
+
+        if self.gain_value is not None:
+            img = img * self.gain_value
+
+        batch_image = torch.from_numpy(img).unsqueeze(0)
+        return batch_image, idx, img_name

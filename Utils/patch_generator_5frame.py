@@ -255,3 +255,126 @@ def gen_patches_with_gainfix_img(file_list,gain_dir,idx_list,patch_size,stride,a
         np.savez_compressed(os.path.join(save_dir,
             f'set1_train_patch_{mrc_num}_{index}_{src_name}.npz'), data=x)
         index=index+1
+
+# --------------------------
+# --- multiple dm4 files ---
+# --------------------------
+def generate_patch_dm4_frames(img_dir, gain_dir, save_dir, patch_size, stride, aug_times, frames=1, processor_num=20, ratio=0.1):
+    patch_size, stride = patch_size, stride
+    aug_times = aug_times
+    save_dir = save_dir
+    src_dir = os.path.join(img_dir, '')
+    src_name = os.path.basename(os.path.normpath(src_dir))
+    
+    multiprocessing.freeze_support()
+    pool = multiprocessing.Pool(processes=processor_num)
+    
+    file_list = sorted(glob.glob(src_dir + '*.dm4'))
+    if not file_list:
+        print(f"No .dm4 files found in {src_dir}")
+        return
+
+    input_args = []
+    try:
+        first_dm = dm.fileDM(file_list[0])
+        temp_data = first_dm.getDataset(0)
+        temp_img = temp_data['data'] if isinstance(temp_data, dict) else temp_data
+        width, height = temp_img.shape
+        del first_dm
+    except Exception as e:
+        print(f"Error reading dimensions from {file_list[0]}: {e}")
+        return
+
+    for file_num in range(len(file_list)):
+        idx_list = idxreturn(file_num, len(file_list), frames)
+        
+        input_args.append((
+            file_list, 
+            gain_dir, 
+            idx_list, 
+            patch_size, 
+            stride, 
+            aug_times, 
+            save_dir, 
+            file_num, 
+            width, 
+            height, 
+            src_name, 
+            ratio
+        ))
+
+    print(f"Generating patches from {len(file_list)} DM4 files...")
+    with tqdm(total=len(input_args)) as pbar:
+        for _ in pool.imap_unordered(map_function_dm4_frames, input_args):
+            pbar.update()
+
+    pool.close()
+    pool.join()
+    print('finish')
+
+def map_function_dm4_frames(args):
+    return gen_patches_with_gainfix_dm4_frames(*args)
+
+def gen_patches_with_gainfix_dm4_frames(file_list, gain_dir, idx_list, patch_size, stride, aug_times, save_dir, mrc_num, width, height, src_name, ratio):
+    patches = []
+    if gain_dir is None or isinstance(gain_dir, type(None)) or gain_dir == 'None':
+        gain_value = np.ones((width, height), dtype=np.float32)
+    else:
+        if gain_dir.endswith('.dm4'):
+            g_obj = dm.fileDM(gain_dir)
+            g_data = g_obj.getDataset(0)
+            gain_value = g_data['data'] if isinstance(g_data, dict) else g_data
+        else:
+            with mrcfile.open(gain_dir, permissive=True) as mrc:
+                gain_value = mrc.data
+        gain_value = np.flipud(gain_value).astype(np.float32)
+
+    for i in range(0, width - patch_size + 1, stride):
+        for j in range(0, height - patch_size + 1, stride):
+            generator = np.random.choice([0, 1], 1, p=[1 - ratio, ratio])
+            if generator[0]:
+                first = True
+                w_rand = random.choice([0]) 
+                h_rand = random.choice([0])
+                for idx in idx_list:
+                    current_file = file_list[idx]
+                    try:
+                        dm_obj = dm.fileDM(current_file)
+                        img_data = dm_obj.getDataset(0)
+                        img = img_data['data'] if isinstance(img_data, dict) else img_data
+                        img = img.astype(np.float32)
+                    except:
+                        img = np.zeros((width, height), dtype=np.float32)
+                    
+                    img_crop = img[i + w_rand : i + patch_size + w_rand,
+                                   j + h_rand : j + patch_size + h_rand]
+                    
+                    gain_crop = gain_value[i + w_rand : i + patch_size + w_rand,
+                                           j + h_rand : j + patch_size + h_rand]
+                    
+                    img_crop = img_crop * gain_crop
+                    img_ready = np.expand_dims(img_crop, 0)
+                    
+                    if first:
+                        first = False
+                        img_series = img_ready
+                    else:
+                        img_series = np.concatenate((img_series, img_ready), axis=0)
+
+                gain_ready = np.expand_dims(gain_crop, 0)
+                #img_series = np.concatenate((img_series, gain_ready), axis=0)
+                for l in range(aug_times):
+                    x_aug = data_aug(img_series, l)
+                    patches.append(x_aug)
+
+    if not os.path.exists(save_dir):
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+        except OSError:
+            pass
+
+    index = 0
+    for x in patches:
+        filename = f'set1_train_patch_{mrc_num}_{index}_{src_name}.npz'
+        np.savez_compressed(os.path.join(save_dir, filename), data=x)
+        index += 1
