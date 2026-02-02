@@ -133,6 +133,14 @@ def cli_main():
             generate_patch_img(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.
                                patch_stride, 1, frames=1, processor_num=args.processor_num, ratio=args.patch_ratio)
             print('------generate_patch_finished------')
+        if args.file_type == 'large_dm4':
+            generate_patch_dm4_frames(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.
+                               patch_stride, 1, frames=args.frame_num, processor_num=args.processor_num, ratio=args.patch_ratio)
+            print('------generate_patch_finished------')
+        if args.file_type == 'single_dm4':
+            generate_patch_dm4_frames(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.
+                               patch_stride, 1, frames=1, processor_num=args.processor_num, ratio=args.patch_ratio)
+            print('------generate_patch_finished------')
     
     # ------------
     # model
@@ -166,7 +174,7 @@ def cli_main():
     std_train = None
     maximum_train = None
     if args.train:
-        if args.file_type == 'mrc' or args.file_type == 'large' or args.file_type == 'single' or args.file_type == 'UDVD_mrc' or args.file_type == 'dm4':
+        if args.file_type == 'mrc' or args.file_type == 'large' or args.file_type == 'single' or args.file_type == 'UDVD_mrc' or args.file_type == 'dm4' or args.file_type == 'large_dm4' or args.file_type == 'single_dm4':
             Trainset, Validationset = Sequentialloader(args.patches_folder, args.img_size, gt_path=args.gt_path,
                                                 validation_length=2*args.batch_size, recursive_factor=args.recursive_factor, frame_num=args.frame_num)
             train_loader = DataLoader(Trainset, batch_size=args.batch_size, shuffle=True, pin_memory=True,
@@ -201,8 +209,12 @@ def cli_main():
             Testset = TestLoader_dm4(args.data_path_test, subset=args.subset_size, gain_dir=args.gain_path, frames=args.frame_num)
         elif args.file_type == 'large':
             Testset = TestLoader_large(args.data_path_test, subset=args.subset_size, frame_num=args.frame_num)
+        elif args.file_type == 'large_dm4':
+            Testset = TestLoader_large_dm4(args.data_path_test, subset=args.subset_size, frame_num=args.frame_num)
         elif args.file_type == 'single':
             Testset = TestLoader_single(args.data_path_test, subset=args.subset_size)
+        elif args.file_type == 'single_dm4':
+            Testset = TestLoader_single_dm4(args.data_path_test, subset=args.subset_size)
         elif args.file_type == 'UDVD_mrc':
             Testset = TestLoader_mrc(args.data_path_test, subset=args.subset_size, gain_dir=args.gain_path)
         else:
@@ -253,10 +265,12 @@ def cli_main():
                 additional_dilation_i=additional_dilation_i,
                 additional_dilation_j=additional_dilation_j,
             )
+        
+
     # ------------
     # training
     # ------------    
-    #     
+         
     full_folder = args.save_folder_name+args.time_stamp
     checkpoint_callback = ModelCheckpoint(dirpath=os.path.join(args.common_path, full_folder) + '/model', save_last=False, every_n_epochs=1,
                                           filename='{epoch}', monitor='val_loss', auto_insert_metric_name=True, 
@@ -285,14 +299,14 @@ def cli_main():
         # ------------
 
         if args.ckpt_path is None:
-            if args.file_type == 'mrc' or args.file_type == 'dm4' or args.file_type == 'large' or args.file_type == 'single' or args.file_type == 'UDVD_mrc':
+            if args.file_type == 'mrc' or args.file_type == 'dm4' or args.file_type == 'large' or args.file_type == 'single' or args.file_type == 'UDVD_mrc' or args.file_type == 'large_dm4' or args.file_type == 'single_dm4': # SK added
                 dm = Dataloader_denoiser()
                 trainer.fit(model)
             else:
                 dm = Dataloader_denoiser()
                 trainer.fit(model)
         else:
-            if args.file_type == 'mrc' or args.file_type == 'dm4' or args.file_type == 'large' or args.file_type == 'single' or args.file_type == 'UDVD_mrc':
+            if args.file_type == 'mrc' or args.file_type == 'dm4' or args.file_type == 'large' or args.file_type == 'single' or args.file_type == 'UDVD_mrc' or args.file_type == 'large_dm4' or args.file_type == 'single_dm4': # SK added
                 dm = Dataloader_denoiser()
                 trainer.fit(model,  ckpt_path=args.ckpt_path)
             else:
