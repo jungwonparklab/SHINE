@@ -259,51 +259,71 @@ def gen_patches_with_gainfix_img(file_list,gain_dir,idx_list,patch_size,stride,a
 # --------------------------
 # --- multiple dm4 files ---
 # --------------------------
-def generate_patch_dm4_frames(img_dir, gain_dir, save_dir, patch_size, stride, aug_times, frames=1, processor_num=20, ratio=0.1):
+from collections import defaultdict
+
+def generate_patch_dm4_frames(img_dir, gain_dir, save_dir, patch_size, stride, aug_times, frames=5, processor_num=20, ratio=0.1):
     patch_size, stride = patch_size, stride
     aug_times = aug_times
     save_dir = save_dir
     src_dir = os.path.join(img_dir, '')
-    src_name = os.path.basename(os.path.normpath(src_dir))
     
     multiprocessing.freeze_support()
     pool = multiprocessing.Pool(processes=processor_num)
     
-    file_list = sorted(glob.glob(src_dir + '*.dm4'))
-    if not file_list:
-        print(f"No .dm4 files found in {src_dir}")
+    # 1. Recursive search for all .dm4 files
+    all_files = glob.glob(os.path.join(src_dir, '**', '*.dm4'), recursive=True)
+    
+    if not all_files:
+        print(f"No .dm4 files found in {src_dir} or its subdirectories.")
         return
 
+    # 2. Group files by subdirectory to prevent mixing different time-series
+    files_by_dir = defaultdict(list)
+    for f in all_files:
+        files_by_dir[os.path.dirname(f)].append(f)
+
     input_args = []
+    
+    # Get dimensions from the very first file found globally
     try:
-        first_dm = dm.fileDM(file_list[0])
+        first_dm = dm.fileDM(all_files[0])
         temp_data = first_dm.getDataset(0)
         temp_img = temp_data['data'] if isinstance(temp_data, dict) else temp_data
         width, height = temp_img.shape
         del first_dm
     except Exception as e:
-        print(f"Error reading dimensions from {file_list[0]}: {e}")
+        print(f"Error reading dimensions from {all_files[0]}: {e}")
         return
 
-    for file_num in range(len(file_list)):
-        idx_list = idxreturn(file_num, len(file_list), frames)
+    # 3. Process each subdirectory independently
+    for d, f_list in files_by_dir.items():
+        f_list.sort() # Ensure temporal order within this specific folder
         
-        input_args.append((
-            file_list, 
-            gain_dir, 
-            idx_list, 
-            patch_size, 
-            stride, 
-            aug_times, 
-            save_dir, 
-            file_num, 
-            width, 
-            height, 
-            src_name, 
-            ratio
-        ))
+        # Use the folder name to distinguish patches in the save directory
+        folder_name = os.path.basename(d)
+        if not folder_name: 
+            folder_name = "root"
 
-    print(f"Generating patches from {len(file_list)} DM4 files...")
+        for file_num in range(len(f_list)):
+            # idxreturn works safely within the length of THIS folder only
+            idx_list = idxreturn(file_num, len(f_list), frames)
+            
+            input_args.append((
+                f_list, 
+                gain_dir, 
+                idx_list, 
+                patch_size, 
+                stride, 
+                aug_times, 
+                save_dir, 
+                file_num, 
+                width, 
+                height, 
+                folder_name, # Pass folder name for safe saving
+                ratio
+            ))
+    
+    print(f"Generating patches from {len(all_files)} DM4 files across {len(files_by_dir)} folders...")
     with tqdm(total=len(input_args)) as pbar:
         for _ in pool.imap_unordered(map_function_dm4_frames, input_args):
             pbar.update()

@@ -314,7 +314,19 @@ class TestLoader_large_dm4(Dataset):
         self.image_dir = image_dir
         self.frame_num = frame_num
         
-        self.image_list = sorted([f for f in os.listdir(image_dir) if f.endswith('.dm4')])
+        self.sequences = []  
+        self.image_list = [] 
+        
+        import os
+        seq_idx = 0
+        for root, _, files in sorted(os.walk(image_dir)):
+            dm4_files = sorted([f for f in files if f.endswith('.dm4')])
+            if dm4_files:
+                self.sequences.append((root, dm4_files))
+                for local_idx, f in enumerate(dm4_files):
+                    self.image_list.append((seq_idx, local_idx, os.path.join(root, f)))
+                seq_idx += 1
+                
         self.total_length = len(self.image_list)
 
         if subset is not None:
@@ -325,32 +337,50 @@ class TestLoader_large_dm4(Dataset):
         self.gain_value = None
         if gain_dir is not None and gain_dir != 'None':
             if gain_dir.endswith('.dm4'):
+                import ncempy.io.dm as dm
                 g_obj = dm.fileDM(gain_dir)
-                g_data = g_obj.getDataset(0)['data']
+                g_data = g_obj.getDataset(0)
+                g_data = g_data['data'] if isinstance(g_data, dict) else g_data
             else:
+                import mrcfile
                 with mrcfile.open(gain_dir, permissive=True) as mrc:
                     g_data = mrc.data
             
-            g_data = np.flipud(g_data).astype(np.float32)
-            self.gain_value = g_data
+            self.gain_value = np.flipud(g_data).astype(np.float32)
 
     def __len__(self):
         return int(self.subset)
 
     def __getitem__(self, idx):
-        idx_list = idxreturn(idx, self.subset, frame_num=self.frame_num)
+        seq_idx, local_idx, fpath = self.image_list[idx]
+        root, dm4_files = self.sequences[seq_idx]
+        
+        idx_list = idxreturn(local_idx, len(dm4_files), frame_num=self.frame_num)
         
         first = True
         img_series = None
-        img_name = ""
+        
+        # --- CRITICAL FIX FOR SAVING ---
+        # 1. Get relative path (e.g., 'folderA/image.dm4')
+        raw_name = os.path.relpath(fpath, self.image_dir)
+        # 2. Change extension to .tif to allow cv2/tifffile to save it
+        img_name = raw_name.replace('.dm4', '.tif')
+        # 3. Flatten directory structure to avoid "missing folder" errors
+        img_name = img_name.replace('/', '_').replace('\\', '_')
+        # Result: 'folderA_image.tif'
+        # -------------------------------
+
+        import ncempy.io.dm as dm
 
         for neighbor_idx in idx_list:
-            fname = self.image_list[neighbor_idx]
-            fpath = os.path.join(self.image_dir, fname)
+            fname = dm4_files[neighbor_idx]
+            neighbor_fpath = os.path.join(root, fname)
             
             try:
-                dm_obj = dm.fileDM(fpath)
-                img = dm_obj.getDataset(0)['data'].astype(np.float32)
+                dm_obj = dm.fileDM(neighbor_fpath)
+                img_data = dm_obj.getDataset(0)
+                img = img_data['data'] if isinstance(img_data, dict) else img_data
+                img = img.astype(np.float32)
             except Exception as e:
                 print(f"Error reading {fname}: {e}")
                 img = np.zeros_like(self.gain_value if self.gain_value is not None else (1024,1024))
@@ -358,7 +388,6 @@ class TestLoader_large_dm4(Dataset):
             if self.gain_value is not None:
                 img = img * self.gain_value
 
-            # Shape (H, W) to (1, H, W)
             img = np.expand_dims(img, axis=0)
 
             if first:
@@ -366,9 +395,6 @@ class TestLoader_large_dm4(Dataset):
                 img_series = img
             else:
                 img_series = np.concatenate((img_series, img), axis=0)
-
-            if neighbor_idx == idx_list[self.frame_num // 2]:
-                img_name = fname
 
         batch_image = torch.from_numpy(img_series)
         return batch_image, idx, img_name
