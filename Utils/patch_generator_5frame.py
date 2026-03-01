@@ -38,7 +38,7 @@ def idxreturn(idx,stack_num,frame_num):
             idx_list.append(idx+i)
         return idx_list
 
-def generate_patch_memory_eficient_gainfix(img_dir,gain_dir,save_dir,patch_size,stride,aug_times,processor_num=20, ratio=0.1, frame_num=5):
+def generate_patch_memory_efficient_gainfix(img_dir,gain_dir,save_dir,patch_size,stride,aug_times,processor_num=20, ratio=0.1, frame_num=5):
     patch_size, stride = patch_size, stride
     aug_times = aug_times
     save_dir = save_dir
@@ -111,7 +111,7 @@ def gen_patches_with_gainfix(file_name,gain_dir,idx_list,patch_size,stride,aug_t
             f'set1_train_patch_{mrc_num}_{stack_num}_{index}.npz'), data=x)
         index=index+1
 
-def generate_patch_memory_eficient_dm4(img_dir, gain_dir, save_dir, patch_size, stride, aug_times, processor_num=20, ratio=0.1, frame_num=5):
+def generate_patch_memory_efficient_dm4(img_dir, gain_dir, save_dir, patch_size, stride, aug_times, processor_num=20, ratio=0.1, frame_num=5):
     patch_size, stride = patch_size, stride
     aug_times = aug_times
     save_dir = save_dir
