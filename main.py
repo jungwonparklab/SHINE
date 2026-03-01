@@ -3,20 +3,22 @@ import datetime
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.strategies import DDPStrategy
+import torch
+from sys import platform
+
 from Nets.Blindspot_Net import *
 from Nets.UDVD import *
 from Nets.UDVD_double import *
 from Nets.UNet import *
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.strategies import DDPStrategy
 from Trainer.TEM_denoiser_patch_main import TEM_denoiser_main
 from Utils.patch_generator_5frame import *
 from Utils.Dataloader_mrc import *
 from Utils.Dataloader_N2V import *
 from Utils.Dataloader_plain import *
-from sys import platform
-import torch
+
 if platform == "Windows":
     os.environ['PL_TORCH_DISTRIBUTED_BACKEND'] = 'gloo'
     windows = True
@@ -24,11 +26,11 @@ if platform == "Darwin":
     macos = True
 
 torch.multiprocessing.set_sharing_strategy('file_system')
-
 torch.set_float32_matmul_precision('medium')
+
 def maybe_str_or_int(arg):
     try:
-        return int(arg)  # try convert to int
+        return int(arg)
     except ValueError:
         pass
     if arg == "bf16":
@@ -41,25 +43,20 @@ def cli_main():
     # ------------
     # path_args
     # ------------
-
     parser = argparse.ArgumentParser()
-
     parser.add_argument('--common_path', type=str, default='./Experiment/Au_3x3_denoising')
     parser.add_argument('--training_path', type=str, default='./Datasets/Au')
     parser.add_argument('--gt_path', type=str, default=None)
     parser.add_argument('--data_path_test', type=str, default='./Datasets/Au')
-    parser.add_argument('--save_folder_name', type=str,
-                        default='experiment')
-    parser.add_argument('--version_folder_name', type=str,
-                        default='3x3_blind_spot')
+    parser.add_argument('--save_folder_name', type=str, default='experiment')
+    parser.add_argument('--version_folder_name', type=str, default='3x3_blind_spot')
 
     # -------------
     # training_args
     # -------------
-
-    parser.add_argument('--file_type', type=str, default='Image')  # Image or mrc, dm4, large, single
-    parser.add_argument('--recursive_factor', type=float, default=1)    # how many times each image is trained within a single epoch
-    parser.add_argument('--loss_function', type=str, default='L2')  # L2, L1
+    parser.add_argument('--file_type', type=str, default='Image')  
+    parser.add_argument('--recursive_factor', type=float, default=1)    
+    parser.add_argument('--loss_function', type=str, default='L2')  
     parser.add_argument('--in_channels', type=int, default=1)
     parser.add_argument('--out_channels', type=int, default=1)
     parser.add_argument('--frame_num', type=int, default=5)
@@ -82,7 +79,6 @@ def cli_main():
     # ------------
     # mrc_file and large only arguments
     # ------------
-    
     parser.add_argument('--prepare_patch', type=int, default=0)
     parser.add_argument('--subset_size', type=int, default=None)
     parser.add_argument('--patch_size', type=int, default=1024)
@@ -95,14 +91,11 @@ def cli_main():
     # ------------
     # select_model
     # ------------
-
-    # 3x3_blind(default), 1x1_blind, 5x5_blind, N2V, UDVD
     parser.add_argument('--model', type=str, default='3x3_blind')
 
     # ------------
     # generated_folder_name
     # ------------
-
     time_stamp = datetime.datetime.now().strftime('%Y%m%d')
     parser.add_argument('--time_stamp', type=str, default=time_stamp)
     args = parser.parse_args()
@@ -110,42 +103,29 @@ def cli_main():
     # -------------
     # prepare_patch
     # -------------
-
-    if args.prepare_patch == True:
+    if args.prepare_patch: # Cleaned up boolean check
         os.makedirs(args.patches_folder, exist_ok=True)
+        
+        # Converted to if/elif chain for cleaner logic
         if args.file_type == 'mrc':
-            generate_patch_memory_eficient_gainfix(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.
-                                                   patch_stride, 1, processor_num=args.processor_num, ratio=args.patch_ratio, frame_num=args.frame_num)
-            print('------generate_patch_finished------')
-        if args.file_type == 'dm4':
-            generate_patch_memory_eficient_dm4(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.
-                                                   patch_stride, 1, processor_num=args.processor_num, ratio=args.patch_ratio, frame_num=args.frame_num)
-            print('------generate_patch_finished------')
-        if args.file_type == 'single_mrc':
-            generate_patch_memory_eficient_gainfix(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.
-                                                   patch_stride, 1, processor_num=args.processor_num, ratio=args.patch_ratio, frame_num=1)
-            print('------generate_patch_finished------')
-        if args.file_type == 'large':
-            generate_patch_img(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.
-                               patch_stride, 1, frames=args.frame_num, processor_num=args.processor_num, ratio=args.patch_ratio)
-            print('------generate_patch_finished------')
-        if args.file_type == 'single':
-            generate_patch_img(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.
-                               patch_stride, 1, frames=1, processor_num=args.processor_num, ratio=args.patch_ratio)
-            print('------generate_patch_finished------')
-        if args.file_type == 'large_dm4':
-            generate_patch_dm4_frames(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.
-                               patch_stride, 1, frames=args.frame_num, processor_num=args.processor_num, ratio=args.patch_ratio)
-            print('------generate_patch_finished------')
-        if args.file_type == 'single_dm4':
-            generate_patch_dm4_frames(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.
-                               patch_stride, 1, frames=1, processor_num=args.processor_num, ratio=args.patch_ratio)
-            print('------generate_patch_finished------')
+            generate_patch_memory_efficient_gainfix(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.patch_stride, 1, processor_num=args.processor_num, ratio=args.patch_ratio, frame_num=args.frame_num)
+        elif args.file_type == 'dm4':
+            generate_patch_memory_efficient_dm4(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.patch_stride, 1, processor_num=args.processor_num, ratio=args.patch_ratio, frame_num=args.frame_num)
+        elif args.file_type == 'single_mrc':
+            generate_patch_memory_efficient_gainfix(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.patch_stride, 1, processor_num=args.processor_num, ratio=args.patch_ratio, frame_num=1)
+        elif args.file_type == 'large':
+            generate_patch_img(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.patch_stride, 1, frames=args.frame_num, processor_num=args.processor_num, ratio=args.patch_ratio)
+        elif args.file_type == 'single':
+            generate_patch_img(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.patch_stride, 1, frames=1, processor_num=args.processor_num, ratio=args.patch_ratio)
+        elif args.file_type == 'large_dm4':
+            generate_patch_dm4_frames(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.patch_stride, 1, frames=args.frame_num, processor_num=args.processor_num, ratio=args.patch_ratio)
+        elif args.file_type == 'single_dm4':
+            generate_patch_dm4_frames(args.training_path, args.gain_path, args.patches_folder, args.patch_size, args.patch_stride, 1, frames=1, processor_num=args.processor_num, ratio=args.patch_ratio)
+        print(f'------generate_patch_finished for {args.file_type}------')
     
     # ------------
     # model
     # ------------
-
     print('-----train_with_model_type-------', args.model)
     additional_dilation_i = 0
     additional_dilation_j = 0
@@ -163,120 +143,95 @@ def cli_main():
     # ------------
     # dataloader_train_val
     # ------------
-
     train_loader = None
     validation_loader = None
     test_loader = None
-    Trainset = None
-    Validationset = None
-    Testset = None
+    trainset = None 
+    validationset = None 
+    testset = None 
     mean_train = None
     std_train = None
     maximum_train = None
+    
     if args.train:
-        if args.file_type == 'mrc' or args.file_type == 'large' or args.file_type == 'single' or args.file_type == 'UDVD_mrc' or args.file_type == 'dm4' or args.file_type == 'large_dm4' or args.file_type == 'single_dm4':
-            Trainset, Validationset = Sequentialloader(args.patches_folder, args.img_size, gt_path=args.gt_path,
-                                                validation_length=2*args.batch_size, recursive_factor=args.recursive_factor, frame_num=args.frame_num)
-            train_loader = DataLoader(Trainset, batch_size=args.batch_size, shuffle=True, pin_memory=True,
-                                        num_workers=args.processor_num, drop_last=True, persistent_workers=True)
-            validation_loader = DataLoader(Validationset, batch_size=args.batch_size, shuffle=False, pin_memory=True,
-                                            num_workers=args.processor_num, drop_last=False, persistent_workers=True)
+        if args.file_type in ['mrc', 'large', 'single', 'UDVD_mrc', 'dm4', 'large_dm4', 'single_dm4']:
+            trainset, validationset = Sequentialloader(args.patches_folder, args.img_size, gt_path=args.gt_path, validation_length=2*args.batch_size, recursive_factor=args.recursive_factor, frame_num=args.frame_num)
         elif args.model == 'N2V':
-            Trainset, Validationset = Sequentialloader_N2V(args.training_path, args.img_size, gt_path=args.gt_path,
-                                                validation_length=2*args.batch_size, recursive_factor=args.recursive_factor)
-            train_loader = DataLoader(Trainset, batch_size=args.batch_size, shuffle=True, pin_memory=True,
-                                        num_workers=args.processor_num, drop_last=True, persistent_workers=True)
-            validation_loader = DataLoader(Validationset, batch_size=args.batch_size, shuffle=False, pin_memory=True,
-                                            num_workers=args.processor_num, drop_last=False, persistent_workers=True)
+            trainset, validationset = Sequentialloader_N2V(args.training_path, args.img_size, gt_path=args.gt_path, validation_length=2*args.batch_size, recursive_factor=args.recursive_factor)
         else:
-            Trainset, Validationset = Sequentialloader_plain(args.training_path, args.img_size, gt_path=args.gt_path,
-                                        validation_length=2, recursive_factor=args.recursive_factor, frame_num=args.frame_num)  
-            train_loader = DataLoader(Trainset, batch_size=args.batch_size, shuffle=True, pin_memory=True,
-                                        num_workers=args.processor_num, drop_last=True, persistent_workers=True)
-            validation_loader = DataLoader(Validationset, batch_size=args.batch_size, shuffle=False, pin_memory=True,
-                                            num_workers=args.processor_num, drop_last=False, persistent_workers=True)
+            trainset, validationset = Sequentialloader_plain(args.training_path, args.img_size, gt_path=args.gt_path, validation_length=2, recursive_factor=args.recursive_factor, frame_num=args.frame_num)  
+        
+        train_loader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=args.processor_num, drop_last=True, persistent_workers=True)
+        validation_loader = DataLoader(validationset, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=args.processor_num, drop_last=False, persistent_workers=True)
+        
         #get mean and std of training set
-        mean_train, std_train, maximum_train = Trainset.get_mean_std()
+        mean_train, std_train, maximum_train = trainset.get_mean_std()
         
     # ------------
     # dataloader_test
     # ------------
-
     if args.test:
         if args.file_type == 'mrc':
-            Testset = TestLoader_mrc(args.data_path_test, subset=args.subset_size, gain_dir=args.gain_path)
+            testset = TestLoader_mrc(args.data_path_test, subset=args.subset_size, gain_dir=args.gain_path)
         elif args.file_type == 'dm4':
-            Testset = TestLoader_dm4(args.data_path_test, subset=args.subset_size, gain_dir=args.gain_path, frames=args.frame_num)
+            testset = TestLoader_dm4(args.data_path_test, subset=args.subset_size, gain_dir=args.gain_path, frames=args.frame_num)
         elif args.file_type == 'large':
-            Testset = TestLoader_large(args.data_path_test, subset=args.subset_size, frame_num=args.frame_num)
+            testset = TestLoader_large(args.data_path_test, subset=args.subset_size, frame_num=args.frame_num)
         elif args.file_type == 'large_dm4':
-            Testset = TestLoader_large_dm4(args.data_path_test, subset=args.subset_size, frame_num=args.frame_num)
+            testset = TestLoader_large_dm4(args.data_path_test, subset=args.subset_size, frame_num=args.frame_num)
         elif args.file_type == 'single':
-            Testset = TestLoader_single(args.data_path_test, subset=args.subset_size)
+            testset = TestLoader_single(args.data_path_test, subset=args.subset_size)
         elif args.file_type == 'single_dm4':
-            Testset = TestLoader_single_dm4(args.data_path_test, subset=args.subset_size)
+            testset = TestLoader_single_dm4(args.data_path_test, subset=args.subset_size)
         elif args.file_type == 'UDVD_mrc':
-            Testset = TestLoader_mrc(args.data_path_test, subset=args.subset_size, gain_dir=args.gain_path)
+            testset = TestLoader_mrc(args.data_path_test, subset=args.subset_size, gain_dir=args.gain_path)
         else:
-            Testset = TestLoader_plain(args.data_path_test, frame_num=args.frame_num)
-
-        
-        # ------------
-        # define_datamodule
-        # ------------
-        
-        class Dataloader_denoiser(pl.LightningDataModule):        
-            def __init__(self):
-                super().__init__() 
-            def train_dataloader(self):
-                return train_loader
-            def val_dataloader(self):
-                return validation_loader
-            
-
-        # ------------
-        # define_model
-        # ------------
-        
-        model = TEM_denoiser_main(
-                network=network,
-                in_channels=args.in_channels,
-                out_channels=args.out_channels,
-                frame_num=args.frame_num,
-                img_size=args.img_size,
-                training_path=args.training_path,
-                save_folder=args.common_path+'/'+args.save_folder_name,
-                time_stamp=args.time_stamp,
-                model_type=args.model,
-                learning_rate=args.learning_rate,
-                batch_size=args.batch_size,
-                lossF=args.loss_function,
-                beta1=args.beta1,
-                beta2=args.beta2,
-                eps=args.eps,
-                weight_decay=args.weight_decay,
-                total_epochs=args.max_epochs,
-                trainset=Trainset,
-                validationset=Validationset,
-                testset=Testset,
-                mean_train=mean_train,
-                std_train=std_train,
-                maximum_train=maximum_train,
-                additional_dilation_i=additional_dilation_i,
-                additional_dilation_j=additional_dilation_j,
-            )
-        
+            testset = TestLoader_plain(args.data_path_test, frame_num=args.frame_num)
 
     # ------------
-    # training
-    # ------------    
-         
+    # define_model
+    # ------------
+    model = TEM_denoiser_main(
+            network=network,
+            in_channels=args.in_channels,
+            out_channels=args.out_channels,
+            frame_num=args.frame_num,
+            img_size=args.img_size,
+            training_path=args.training_path,
+            save_folder=args.common_path+'/'+args.save_folder_name,
+            time_stamp=args.time_stamp,
+            model_type=args.model,
+            learning_rate=args.learning_rate,
+            batch_size=args.batch_size,
+            lossF=args.loss_function,
+            beta1=args.beta1,
+            beta2=args.beta2,
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            total_epochs=args.max_epochs,
+            trainset=trainset,
+            validationset=validationset,
+            testset=testset,
+            mean_train=mean_train,
+            std_train=std_train,
+            maximum_train=maximum_train,
+            additional_dilation_i=additional_dilation_i,
+            additional_dilation_j=additional_dilation_j,
+        )
+
+    # ------------
+    # Trainer Setup
+    # ------------       
     full_folder = args.save_folder_name+args.time_stamp
-    checkpoint_callback = ModelCheckpoint(dirpath=os.path.join(args.common_path, full_folder) + '/model', save_last=False, every_n_epochs=1,
-                                          filename='{epoch}', monitor='val_loss', auto_insert_metric_name=True, 
-                                          save_top_k=3, verbose=True)
-    logger = TensorBoardLogger(
-        args.common_path, name=full_folder, version=args.version_folder_name, max_queue=100)
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=os.path.join(args.common_path, full_folder) + '/model', 
+        save_last=False, every_n_epochs=1,
+        filename='{epoch}', monitor='val_loss', auto_insert_metric_name=True, 
+        save_top_k=3, verbose=True
+    )
+    
+    logger = TensorBoardLogger(args.common_path, name=full_folder, version=args.version_folder_name, max_queue=100)
+    
     if platform == "Darwin":
         trainer = pl.Trainer(default_root_dir=full_folder+'/checkpoint', precision=args.precision, accelerator='mps',
                             callbacks=checkpoint_callback, num_sanity_val_steps=2,
@@ -290,58 +245,31 @@ def cli_main():
         strategy = DDPStrategy(find_unused_parameters=True)
         trainer = pl.Trainer(default_root_dir=full_folder+'/checkpoint', precision=args.precision, accelerator='auto', devices=args.gpus,
                         callbacks=checkpoint_callback, num_sanity_val_steps=2, 
-                        max_epochs=args.max_epochs, logger=logger, strategy='auto')
+                        max_epochs=args.max_epochs, logger=logger, strategy=strategy)
         
+    # ------------
+    # Training
+    # ------------
     if args.train:
-
-        # ------------
-        # define_test_datamodule
-        # ------------
-
         if args.ckpt_path is None:
-            if args.file_type == 'mrc' or args.file_type == 'dm4' or args.file_type == 'large' or args.file_type == 'single' or args.file_type == 'UDVD_mrc' or args.file_type == 'large_dm4' or args.file_type == 'single_dm4': # SK added
-                dm = Dataloader_denoiser()
-                trainer.fit(model)
-            else:
-                dm = Dataloader_denoiser()
-                trainer.fit(model)
+            trainer.fit(model)
         else:
-            if args.file_type == 'mrc' or args.file_type == 'dm4' or args.file_type == 'large' or args.file_type == 'single' or args.file_type == 'UDVD_mrc' or args.file_type == 'large_dm4' or args.file_type == 'single_dm4': # SK added
-                dm = Dataloader_denoiser()
-                trainer.fit(model,  ckpt_path=args.ckpt_path)
-            else:
-                trainer.fit(model, ckpt_path=args.ckpt_path)
+            trainer.fit(model, ckpt_path=args.ckpt_path)
 
     # ------------
-    # testing
+    # Testing
     # ------------
-
     if args.test:
-
-        class Dataloader_denoiser_test(pl.LightningDataModule):
-            def __init__(self):
-                super().__init__()
-            def test_dataloader(self):
-                return DataLoader(Testset, batch_size=1, shuffle=False, pin_memory=False)
-            def predict_dataloader(self):
-                return DataLoader(Testset, batch_size=1, shuffle=False, pin_memory=False)
-    
-
         if args.ckpt_path is not None:
-            if args.file_type == 'mrc' or args.file_type == 'UDVD_mrc':
-                dm = Dataloader_denoiser_test()
+            if args.file_type in ['mrc', 'UDVD_mrc']:
                 trainer.test(model, ckpt_path=args.ckpt_path)
             else:
-                dm = Dataloader_denoiser_test()
                 trainer.predict(model, ckpt_path=args.ckpt_path)
         else:
-            if args.file_type == 'mrc' or args.file_type == 'UDVD_mrc':
-                dm = Dataloader_denoiser_test()
+            if args.file_type in ['mrc', 'UDVD_mrc']:
                 trainer.test(model, ckpt_path="best")
             else:
-                dm = Dataloader_denoiser_test()
                 trainer.predict(model, ckpt_path="best")
-
 
 if __name__ == '__main__':
     cli_main()
